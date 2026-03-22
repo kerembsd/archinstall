@@ -63,13 +63,13 @@ mount "$EFI_PART" /mnt/boot
 REAL_LUKS_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 
 # ==========================================
-# 4. TEMEL SİSTEM VE PAKET KURULUMU
+# 4. TEMEL SİSTEM VE PAKET KURULUMu
 # ==========================================
 echo "=> Paketler kuruluyor..."
 pacstrap /mnt base base-devel linux linux-headers linux-firmware intel-ucode \
     btrfs-progs nano nano-syntax-highlighting networkmanager git \
     xorg-server i3-wm i3status dmenu ly gnome-terminal polkit-gnome \
-    nvidia-open nvidia-settings nvidia-utils \
+    nvidia-open nvidia-utils \
     pipewire pipewire-alsa pipewire-pulse wireplumber \
     bluez bluez-utils ufw zram-generator timeshift wget
 
@@ -144,4 +144,15 @@ systemctl enable ly.service
 echo -e "[zram0]\nzram-size = min(ram / 2, 4096)" > /etc/systemd/zram-generator.conf
 
 # Yay kurulumu
-su - $USER_NAME -c 'git clone https://aur.archlinux.org/yay.git ~/yay && cd ~/
+su - $USER_NAME -c 'git clone https://aur.archlinux.org/yay.git ~/yay && cd ~/yay && makepkg -si --noconfirm && rm -rf ~/yay'
+EOF
+
+chmod +x /mnt/chroot.sh
+arch-chroot /mnt /chroot.sh
+rm /mnt/chroot.sh
+
+echo "=========================================="
+echo "KURULUM TAMAMLANDI!"
+echo "Şimdi 'reboot' yazarak sistemi yeniden başlatabilirsin."
+echo "Not: i3 config dosyana 'exec --no-startup-id /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1' eklemeyi unutma."
+echo "=========================================="
