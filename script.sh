@@ -2,28 +2,42 @@
 set -e
 
 # ==========================================
-# 1. DİSK SEÇİMİ VE DEĞİŞKENLER
+# 1. BİLGİ TOPLAMA
 # ==========================================
 echo "=> Mevcut diskler listeleniyor:"
 lsblk -dno NAME,SIZE,MODEL | grep -v "loop\|rom"
 echo "------------------------------------------"
-read -p "Lütfen kurulum yapmak istediğiniz diski girin (Örn: nvme0n1 veya sda): " DISK_NAME
-DISK="/dev/$DISK_NAME"
-USER_NAME="kerem"
-HOST_NAME="archlinux"
+
+while true; do
+    read -p "Kurulum yapılacak disk (Örn: nvme0n1): " DISK_NAME
+    if [ -b "/dev/$DISK_NAME" ]; then
+        DISK="/dev/$DISK_NAME"
+        break
+    else
+        echo "Hata: /dev/$DISK_NAME geçerli bir disk değil."
+    fi
+done
+
+while true; do
+    read -p "Kullanıcı adı: " USER_NAME
+    [[ -z "$USER_NAME" ]] && echo "Boş bırakılamaz!" || break
+done
+
+while true; do
+    read -p "Host adı: " HOST_NAME
+    [[ -z "$HOST_NAME" ]] && echo "Boş bırakılamaz!" || break
+done
 
 # ==========================================
-# 2. ZAMAN AYARI VE DİSK BÖLÜMLEME
+# 2. DİSK VE BTRFS YAPILANDIRMASI
 # ==========================================
-echo "=> Zaman güncelleniyor..."
 timedatectl set-ntp true
-
-echo "=> Disk formatlanıyor ve bölümleniyor ($DISK)..."
 sgdisk --zap-all "$DISK"
 sgdisk -n 1:0:+1G -t 1:ef00 -c 1:"EFI" "$DISK"
 sgdisk -n 2:0:0 -t 2:8309 -c 2:"LUKS_ROOT" "$DISK"
 
-if [[ $DISK == *"nvme"* ]]; then
+# Disk isimlendirme kontrolü (p1/p2 vs 1/2)
+if [[ $DISK == *"nvme"* || $DISK == *"mmcblk"* ]]; then
     EFI_PART="${DISK}p1"
     ROOT_PART="${DISK}p2"
 else
@@ -31,21 +45,14 @@ else
     ROOT_PART="${DISK}2"
 fi
 
-# ==========================================
-# 3. LUKS ŞİFRELEME VE BTRFS
-# ==========================================
-echo "=> LUKS şifreleme ayarlanıyor..."
+echo "=> Disk şifreleniyor (LUKS)..."
 cryptsetup -q -y -v luksFormat "$ROOT_PART"
 cryptsetup open "$ROOT_PART" cryptroot
 
-echo "=> Btrfs dosya sistemi oluşturuluyor..."
+echo "=> Btrfs subvolume'lar oluşturuluyor..."
 mkfs.btrfs -f /dev/mapper/cryptroot
 mount /dev/mapper/cryptroot /mnt
-btrfs subvolume create /mnt/@
-btrfs subvolume create /mnt/@home
-btrfs subvolume create /mnt/@log
-btrfs subvolume create /mnt/@pkg
-btrfs subvolume create /mnt/@snapshots
+for sub in @ @home @log @pkg @snapshots; do btrfs subvolume create /mnt/$sub; done
 umount /mnt
 
 MOUNT_OPTS="rw,noatime,compress=zstd,space_cache=v2,discard=async"
@@ -58,31 +65,29 @@ mount -o "$MOUNT_OPTS",subvol=@snapshots /dev/mapper/cryptroot /mnt/.snapshots
 
 mkfs.fat -F32 "$EFI_PART"
 mount "$EFI_PART" /mnt/boot
-
-# KRİTİK: Chroot içine aktarmak için UUID'yi ana sistemde alıyoruz
 REAL_LUKS_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 
 # ==========================================
-# 4. TEMEL SİSTEM VE PAKET KURULUMu
+# 3. PAKET KURULUMU
 # ==========================================
 echo "=> Paketler kuruluyor..."
 pacstrap /mnt base base-devel linux linux-headers linux-firmware intel-ucode \
     btrfs-progs nano nano-syntax-highlighting networkmanager git \
-    xorg-server xorg-xinit xorg-xauth i3-wm i3status dmenu gnome-terminal polkit-gnome \
-    nvidia-open nvidia-utils \
-    pipewire pipewire-alsa pipewire-pulse wireplumber \
+    xorg-server xorg-xauth xorg-xinit i3-wm i3status dmenu gnome-terminal \
+    lxsession polkit \
+    nvidia-open nvidia-utils pipewire pipewire-alsa pipewire-pulse wireplumber pavucontrol \
     bluez bluez-utils ufw zram-generator timeshift wget
 
 genfstab -U /mnt >> /mnt/etc/fstab
 
 # ==========================================
-# 5. CHROOT AŞAMASI
+# 4. CHROOT İŞLEMLERİ
 # ==========================================
 cat <<EOF > /mnt/chroot.sh
 #!/bin/bash
 set -e
 
-# Saat ve Dil Ayarları
+# Dil ve Klavye
 ln -sf /usr/share/zoneinfo/Europe/Istanbul /etc/localtime
 hwclock --systohc
 echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
@@ -91,33 +96,25 @@ locale-gen
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
 echo "KEYMAP=trq" > /etc/vconsole.conf
 
-# Nano Syntax Highlighting
-echo 'include "/usr/share/nano/*.nanorc"' >> /etc/nanorc
+# X11 Klavye (TR)
+mkdir -p /etc/X11/xorg.conf.d/
+cat <<XKB > /etc/X11/xorg.conf.d/00-keyboard.conf
+Section "InputClass"
+        Identifier "system-keyboard"
+        MatchIsKeyboard "on"
+        Option "XkbLayout" "tr"
+EndSection
+XKB
 
-# Hostname
 echo "$HOST_NAME" > /etc/hostname
-cat <<HOSTS > /etc/hosts
-127.0.0.1   localhost
-::1         localhost
-127.0.1.1   $HOST_NAME.localdomain $HOST_NAME
-HOSTS
 
-# mkinitcpio
-sed -i 's/MODULES=()/MODULES=(btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g' /etc/mkinitcpio.conf
-sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
+# mkinitcpio (microcode kaldırıldı, doğru yer bootloader)
+sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf kms keyboard keymap consolefont block encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
 # Bootloader (systemd-boot)
 bootctl install
-
-cat <<LOADER > /boot/loader/loader.conf
-default arch.conf
-timeout 3
-console-mode max
-editor no
-LOADER
-
-# Dışarıdan gelen REAL_LUKS_UUID buraya enjekte ediliyor
+echo -e "default arch.conf\ntimeout 3\neditor no" > /boot/loader/loader.conf
 cat <<ENTRY > /boot/loader/entries/arch.conf
 title   Arch Linux
 linux   /vmlinuz-linux
@@ -126,23 +123,47 @@ initrd  /initramfs-linux.img
 options cryptdevice=UUID=$REAL_LUKS_UUID:cryptroot root=/dev/mapper/cryptroot rootflags=subvol=@ rw nvidia_drm.modeset=1
 ENTRY
 
-# Kullanıcı ve Yetkiler
+# ZRAM Yapılandırması (Otomatik)
+cat <<ZRAM > /etc/systemd/zram-generator.conf
+[zram0]
+zram-size = min(ram / 2, 4096)
+compression-algorithm = zstd
+swap-priority = 100
+fs-type = swap
+ZRAM
+
+# Kullanıcı İşlemleri
 useradd -m -G wheel,video,audio,storage,optical -s /bin/bash $USER_NAME
-echo "=> $USER_NAME kullanıcısı için şifre belirleyin:"
+echo "=> $USER_NAME kullanıcısı için şifre:"
 passwd $USER_NAME
-echo "=> Root kullanıcısı için şifre belirleyin:"
+echo "=> Root kullanıcısı için şifre:"
 passwd
 sed -i 's/# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 # Servisler
-systemctl enable NetworkManager
-systemctl enable bluetooth
-systemctl enable ufw
+systemctl enable NetworkManager bluetooth ufw
 
-# Zram Konfigürasyonu
-echo -e "[zram0]\nzram-size = min(ram / 2, 4096)" > /etc/systemd/zram-generator.conf
+# .xinitrc (LXPolkit ve Pipewire düzeltildi)
+cat <<XINIT > /home/$USER_NAME/.xinitrc
+export GKSU_TYPE=gksu
+exec_always --no-startup-id setxkbmap tr
+lxsession &
+exec i3
+XINIT
 
-# Yay kurulumu
+# .bash_profile
+cat <<BASH_P > /home/$USER_NAME/.bash_profile
+[[ -f ~/.bashrc ]] && . ~/.bashrc
+if [[ -z \$DISPLAY ]] && [[ \$(tty) = /dev/tty1 ]]; then
+    exec startx
+fi
+BASH_P
+
+chown $USER_NAME:$USER_NAME /home/$USER_NAME/.xinitrc /home/$USER_NAME/.bash_profile
+mkdir -p /home/$USER_NAME/.config/i3
+chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/.config
+
+# Yay Kurulumu (AUR)
 su - $USER_NAME -c 'git clone https://aur.archlinux.org/yay.git ~/yay && cd ~/yay && makepkg -si --noconfirm && rm -rf ~/yay'
 EOF
 
@@ -152,6 +173,6 @@ rm /mnt/chroot.sh
 
 echo "=========================================="
 echo "KURULUM TAMAMLANDI!"
-echo "Şimdi 'reboot' yazarak sistemi yeniden başlatabilirsin."
-echo "Not: i3 config dosyana 'exec --no-startup-id /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1' eklemeyi unutma."
+echo "Sistemi 'reboot' yaparak başlatabilirsin."
+echo "ZRAM aktif, LUKS şifreleme hazır, i3 kurulu."
 echo "=========================================="
