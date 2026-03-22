@@ -69,7 +69,7 @@ echo "=> Paketler kuruluyor..."
 pacstrap /mnt base base-devel linux linux-headers linux-firmware intel-ucode \
     btrfs-progs nano nano-syntax-highlighting networkmanager git \
     xorg-server i3-wm i3status dmenu ly gnome-terminal polkit-gnome \
-    nvidia-open nvidia-utils \
+    nvidia-open nvidia-settings nvidia-utils \
     pipewire pipewire-alsa pipewire-pulse wireplumber \
     bluez bluez-utils ufw zram-generator timeshift wget
 
