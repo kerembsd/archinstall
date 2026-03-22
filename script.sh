@@ -68,7 +68,7 @@ REAL_LUKS_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 echo "=> Paketler kuruluyor..."
 pacstrap /mnt base base-devel linux linux-headers linux-firmware intel-ucode \
     btrfs-progs nano nano-syntax-highlighting networkmanager git \
-    xorg-server i3-wm i3status dmenu gnome-terminal polkit-gnome \
+    xorg-server xorg-xinit xorg-xauth i3-wm i3status dmenu gnome-terminal polkit-gnome \
     nvidia-open nvidia-utils \
     pipewire pipewire-alsa pipewire-pulse wireplumber \
     bluez bluez-utils ufw zram-generator timeshift wget
