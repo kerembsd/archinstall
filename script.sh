@@ -68,7 +68,7 @@ REAL_LUKS_UUID=$(blkid -s UUID -o value "$ROOT_PART")
 echo "=> Paketler kuruluyor..."
 pacstrap /mnt base base-devel linux linux-headers linux-firmware intel-ucode \
     btrfs-progs nano nano-syntax-highlighting networkmanager git \
-    xorg-server i3-wm i3status dmenu ly gnome-terminal polkit-gnome \
+    xorg-server i3-wm i3status dmenu gnome-terminal polkit-gnome \
     nvidia-open nvidia-utils \
     pipewire pipewire-alsa pipewire-pulse wireplumber \
     bluez bluez-utils ufw zram-generator timeshift wget
@@ -102,7 +102,7 @@ cat <<HOSTS > /etc/hosts
 127.0.1.1   $HOST_NAME.localdomain $HOST_NAME
 HOSTS
 
-# mkinitcpio (Hook sıralaması düzeltildi: keyboard ve keymap encrypt'ten önce!)
+# mkinitcpio
 sed -i 's/MODULES=()/MODULES=(btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm)/g' /etc/mkinitcpio.conf
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
@@ -138,7 +138,6 @@ sed -i 's/# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 systemctl enable NetworkManager
 systemctl enable bluetooth
 systemctl enable ufw
-systemctl enable ly.service
 
 # Zram Konfigürasyonu
 echo -e "[zram0]\nzram-size = min(ram / 2, 4096)" > /etc/systemd/zram-generator.conf
