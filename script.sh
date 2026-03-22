@@ -65,14 +65,15 @@ fi
 echo ""
 echo -e "${BOLD}GPU yapılandırması:${NC}"
 echo "  1) Intel iGPU only (entegre)"
-echo "  2) NVIDIA only — Proprietary (tüm GPU'lar, Maxwell+)"
-echo "  3) NVIDIA only — Open (yalnızca Turing+ / RTX serisi)"
-echo "  4) Intel + NVIDIA Optimus — Proprietary (laptop)"
-echo "  5) Intel + NVIDIA Optimus — Open (laptop, Turing+)"
+echo "  2) AMD GPU (radeon/amdgpu)"
+echo "  3) NVIDIA only — Proprietary (tüm GPU'lar, Maxwell+)"
+echo "  4) NVIDIA only — Open (yalnızca Turing+ / RTX serisi)"
+echo "  5) Intel + NVIDIA Optimus — Proprietary (laptop)"
+echo "  6) Intel + NVIDIA Optimus — Open (laptop, Turing+)"
+echo "  7) Sanal Makine (VirtualBox / VMware / QEMU)"
 while true; do
-    read -rp "Seçim [1-5]: " GPU_CHOICE
-    [[ "$GPU_CHOICE" =~ ^[12345]$ ]] && break
-done
+    read -rp "Seçim [1-7]: " GPU_CHOICE
+    [[ "$GPU_CHOICE" =~ ^[1234567]$ ]] && break
 
 # Swap büyüklüğü
 read -rp "ZRAM boyutu (MB, önerilen: 4096): " ZRAM_SIZE
@@ -163,10 +164,12 @@ section "Temel Paketlerin Kurulumu"
 # GPU paketlerini belirle
 case "$GPU_CHOICE" in
     1) GPU_PKGS="mesa intel-media-driver vulkan-intel" ;;
-    2) GPU_PKGS="nvidia nvidia-utils nvidia-settings" ;;
-    3) GPU_PKGS="nvidia-open nvidia-utils nvidia-settings" ;;
-    4) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia nvidia-utils nvidia-prime nvidia-settings" ;;
-    5) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia-open nvidia-utils nvidia-prime nvidia-settings" ;;
+    2) GPU_PKGS="mesa libva-mesa-driver vulkan-radeon xf86-video-amdgpu" ;;
+    3) GPU_PKGS="nvidia nvidia-utils nvidia-settings" ;;
+    4) GPU_PKGS="nvidia-open nvidia-utils nvidia-settings" ;;
+    5) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia nvidia-utils nvidia-prime nvidia-settings" ;;
+    6) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia-open nvidia-utils nvidia-prime nvidia-settings" ;;
+    7) GPU_PKGS="mesa xf86-video-vmware virtualbox-guest-utils" ;;
 esac
 
 # =============================================================================
@@ -205,7 +208,7 @@ pacstrap /mnt \
     snapper snap-pac \
     feh picom dunst \
     ttf-dejavu ttf-liberation noto-fonts \
-    man-db man-pages \
+    man-db man-pages terminus-font \
     $GPU_PKGS
 
 info "Paketler kuruldu."
@@ -265,7 +268,7 @@ sed -i 's/#tr_TR.UTF-8/tr_TR.UTF-8/' /etc/locale.gen
 locale-gen
 
 echo "LANG=en_US.UTF-8" > /etc/locale.conf
-echo "KEYMAP=trq"        > /etc/vconsole.conf
+printf "KEYMAP=trq\nCONSOLEFONT=ter-v16n\n" > /etc/vconsole.conf
 
 # X11 Türkçe klavye
 mkdir -p /etc/X11/xorg.conf.d/
@@ -291,14 +294,14 @@ info "Hostname: $HOST_NAME"
 # ── mkinitcpio ───────────────────────────────────────────────────────────────
 section "initramfs Yapılandırması"
 
-# NVIDIA için gerekli modüller (GPU_CHOICE 2-5 arası NVIDIA içerir)
-if [[ "$GPU_CHOICE" != "1" ]]; then
+# NVIDIA için gerekli modüller (GPU_CHOICE 3-6 arası NVIDIA içerir)
+if [[ "$GPU_CHOICE" =~ ^[3456]$ ]]; then
     sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-    # NVIDIA varsa kms hook çıkar (çakışma önlemi), yoksa ekle (erken framebuffer)
+    # NVIDIA varsa kms hook çıkar (çakışma önlemi)
     sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf block keyboard keymap consolefont encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 else
     sed -i 's/^MODULES=.*/MODULES=()/' /etc/mkinitcpio.conf
-    # Intel/AMD only: kms hook flicker azaltır, erken framebuffer sağlar
+    # Intel/AMD/VM: kms hook flicker azaltır, erken framebuffer sağlar
     sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms block keyboard keymap consolefont encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 fi
 mkinitcpio -P
@@ -316,10 +319,10 @@ console-mode max
 editor no
 LOADER
 
-# nvidia_drm.modeset sadece NVIDIA varsa
+# nvidia_drm.modeset sadece NVIDIA varsa (3-6)
 # NVreg_PreserveVideoMemoryAllocations → laptop uyku/uyanma sorunlarını önler
 NV_OPT=""
-[[ "$GPU_CHOICE" != "1" ]] && NV_OPT=" nvidia_drm.modeset=1 NVreg_PreserveVideoMemoryAllocations=1"
+[[ "$GPU_CHOICE" =~ ^[3456]$ ]] && NV_OPT=" nvidia_drm.modeset=1 NVreg_PreserveVideoMemoryAllocations=1"
 
 # ucode initrd satırı CPU'ya göre
 UCODE_IMG="/${CPU_UCODE}.img"
@@ -368,22 +371,54 @@ info "UFW yapılandırıldı (ilk boot'ta otomatik etkinleşecek)."
 
 # ── Snapper (Btrfs Snapshot) ─────────────────────────────────────────────────
 section "Snapper Yapılandırması"
-snapper -c root create-config /
-# Snapper kendi subvolume'unu oluşturur; biz @snapshots subvol'ünü kullanacağız
+
+# snapper create-config chroot'ta DBus gerektirdiğinden çalışmaz.
+# Config dosyasını ve dizin yapısını manuel oluşturuyoruz.
+mkdir -p /etc/snapper/configs
+
+cat > /etc/snapper/configs/root <<'SNAPPER_CONF'
+SUBVOLUME="/"
+FSTYPE="btrfs"
+QGROUP=""
+SPACE_LIMIT="0.5"
+FREE_LIMIT="0.2"
+ALLOW_USERS=""
+ALLOW_GROUPS=""
+SYNC_ACL="no"
+BACKGROUND_COMPARISON="yes"
+NUMBER_CLEANUP="yes"
+NUMBER_MIN_AGE="1800"
+NUMBER_LIMIT="50"
+NUMBER_LIMIT_IMPORTANT="10"
+TIMELINE_CREATE="yes"
+TIMELINE_CLEANUP="yes"
+TIMELINE_MIN_AGE="1800"
+TIMELINE_LIMIT_HOURLY="5"
+TIMELINE_LIMIT_DAILY="7"
+TIMELINE_LIMIT_WEEKLY="4"
+TIMELINE_LIMIT_MONTHLY="3"
+TIMELINE_LIMIT_YEARLY="1"
+EMPTY_PRE_POST_CLEANUP="yes"
+EMPTY_PRE_POST_MIN_AGE="1800"
+SNAPPER_CONF
+
+# snapper'ın bu config'i tanıması için /etc/snapper/configs listesine ekle
+echo "root" >> /etc/snapper/configs/root 2>/dev/null || true
+# Ana config dosyasına root config'ini kaydet
+if [ -f /etc/conf.d/snapper ]; then
+    sed -i 's/^SNAPPER_CONFIGS=.*/SNAPPER_CONFIGS="root"/' /etc/conf.d/snapper
+else
+    echo 'SNAPPER_CONFIGS="root"' > /etc/conf.d/snapper
+fi
+
+# @snapshots subvolume'unu bağla
 umount /.snapshots 2>/dev/null || true
-btrfs subvolume delete /.snapshots 2>/dev/null || true
+rm -rf /.snapshots
 mkdir -p /.snapshots
 mount -o "rw,noatime,compress=zstd:3,space_cache=v2,subvol=@snapshots" \
     /dev/mapper/cryptroot /.snapshots
 chmod 750 /.snapshots
-
-# Snapshot birikimi önlemek için limitleri ayarla
-sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/'   /etc/snapper/configs/root
-sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/'     /etc/snapper/configs/root
-sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="4"/'   /etc/snapper/configs/root
-sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="3"/' /etc/snapper/configs/root
-sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="1"/'   /etc/snapper/configs/root
-info "Snapper yapılandırıldı."
+info "Snapper yapılandırıldı (DBus olmadan, manuel config)."
 
 # ── Kullanıcı ────────────────────────────────────────────────────────────────
 section "Kullanıcı Oluşturuluyor: $USER_NAME"
@@ -428,8 +463,8 @@ fi
 BASH_P
 
 # ── .bashrc (Optimus alias) ───────────────────────────────────────────────────
-# GPU_CHOICE 4 veya 5 → Optimus → prime-run alias ekle
-if [[ "$GPU_CHOICE" == "4" || "$GPU_CHOICE" == "5" ]]; then
+# GPU_CHOICE 5 veya 6 → Optimus → prime-run alias ekle
+if [[ "$GPU_CHOICE" == "5" || "$GPU_CHOICE" == "6" ]]; then
     cat >> "/home/${USER_NAME}/.bashrc" <<'BASHRC'
 
 # NVIDIA Optimus: dGPU ile uygulama çalıştırmak için
@@ -437,6 +472,12 @@ if [[ "$GPU_CHOICE" == "4" || "$GPU_CHOICE" == "5" ]]; then
 alias nrun='prime-run'
 BASHRC
     info "prime-run alias eklendi (~/.bashrc → 'nrun')."
+fi
+
+# GPU_CHOICE 7 → VM → vboxservice etkinleştir
+if [[ "$GPU_CHOICE" == "7" ]]; then
+    systemctl enable vboxservice 2>/dev/null || true
+    info "VirtualBox guest servisleri etkinleştirildi."
 fi
 
 # ── i3 config ────────────────────────────────────────────────────────────────
