@@ -74,6 +74,7 @@ echo "  7) Sanal Makine (VirtualBox / VMware / QEMU)"
 while true; do
     read -rp "Seçim [1-7]: " GPU_CHOICE
     [[ "$GPU_CHOICE" =~ ^[1234567]$ ]] && break
+done
 
 # Swap büyüklüğü
 read -rp "ZRAM boyutu (MB, önerilen: 4096): " ZRAM_SIZE
