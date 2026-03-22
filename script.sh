@@ -118,6 +118,7 @@ cryptsetup luksFormat --type luks2 \
     --key-size 512 \
     --hash sha512 \
     --pbkdf argon2id \
+    --batch-mode \
     "$ROOT_PART"
 cryptsetup open "$ROOT_PART" cryptroot
 info "LUKS2 konteyneri açıldı."
