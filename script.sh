@@ -52,7 +52,7 @@ while true; do
 done
 
 # CPU ucode tespiti
-CPU_VENDOR=$(lscpu | grep "Vendor ID" | awk '{print $3}')
+CPU_VENDOR=$(lscpu | awk -F: '/Vendor ID/ {print $2}' | xargs)
 if [[ "$CPU_VENDOR" == "AuthenticAMD" ]]; then
     CPU_UCODE="amd-ucode"
     info "AMD işlemci tespit edildi → amd-ucode kullanılacak."
@@ -84,7 +84,7 @@ read -rp "Devam etmek için 'EVET' yazın: " CONFIRM
 [[ "$CONFIRM" == "EVET" ]] || error "Kurulum iptal edildi."
 
 # =============================================================================
-# 3. DİSK YAPILAN DİRMASI
+# 3. DİSK YAPILANDIRMASI
 # =============================================================================
 section "Disk Bölümlendirme"
 
@@ -173,6 +173,7 @@ esac
 # =============================================================================
 section "Mirror Optimizasyonu"
 
+pacman -Sy --noconfirm archlinux-keyring
 pacman -S --noconfirm reflector
 info "Reflector kuruldu, en hızlı mirror'lar seçiliyor (30-60 sn sürebilir)..."
 
@@ -197,7 +198,7 @@ pacstrap /mnt \
     alacritty \
     lxsession polkit polkit-gnome \
     pipewire pipewire-alsa pipewire-pulse pipewire-jack wireplumber pavucontrol \
-    bluez bluez-utils \
+    bluez bluez-utils blueman \
     ufw \
     zram-generator \
     snapper snap-pac \
@@ -280,11 +281,13 @@ section "initramfs Yapılandırması"
 # NVIDIA için gerekli modüller (GPU_CHOICE 2-5 arası NVIDIA içerir)
 if [[ "$GPU_CHOICE" != "1" ]]; then
     sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
+    # NVIDIA varsa kms hook çıkar (çakışma önlemi), yoksa ekle (erken framebuffer)
+    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf block keyboard keymap consolefont encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 else
     sed -i 's/^MODULES=.*/MODULES=()/' /etc/mkinitcpio.conf
+    # Intel/AMD only: kms hook flicker azaltır, erken framebuffer sağlar
+    sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms block keyboard keymap consolefont encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 fi
-
-sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf block keyboard keymap consolefont encrypt btrfs filesystems fsck)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 info "initramfs oluşturuldu."
 
@@ -343,7 +346,8 @@ info "ZRAM yapılandırıldı."
 # ── UFW Güvenlik Duvarı ──────────────────────────────────────────────────────
 ufw default deny incoming
 ufw default allow outgoing
-ufw enable
+yes | ufw enable
+systemctl enable ufw
 info "UFW güvenlik duvarı etkinleştirildi."
 
 # ── Snapper (Btrfs Snapshot) ─────────────────────────────────────────────────
@@ -356,6 +360,13 @@ mkdir -p /.snapshots
 mount -o "rw,noatime,compress=zstd:3,space_cache=v2,subvol=@snapshots" \
     /dev/mapper/cryptroot /.snapshots
 chmod 750 /.snapshots
+
+# Snapshot birikimi önlemek için limitleri ayarla
+sed -i 's/^TIMELINE_LIMIT_HOURLY=.*/TIMELINE_LIMIT_HOURLY="5"/'   /etc/snapper/configs/root
+sed -i 's/^TIMELINE_LIMIT_DAILY=.*/TIMELINE_LIMIT_DAILY="7"/'     /etc/snapper/configs/root
+sed -i 's/^TIMELINE_LIMIT_WEEKLY=.*/TIMELINE_LIMIT_WEEKLY="4"/'   /etc/snapper/configs/root
+sed -i 's/^TIMELINE_LIMIT_MONTHLY=.*/TIMELINE_LIMIT_MONTHLY="3"/' /etc/snapper/configs/root
+sed -i 's/^TIMELINE_LIMIT_YEARLY=.*/TIMELINE_LIMIT_YEARLY="1"/'   /etc/snapper/configs/root
 info "Snapper yapılandırıldı."
 
 # ── Kullanıcı ────────────────────────────────────────────────────────────────
@@ -399,6 +410,18 @@ if [[ -z "$DISPLAY" ]] && [[ "$(tty)" == "/dev/tty1" ]]; then
     exec startx
 fi
 BASH_P
+
+# ── .bashrc (Optimus alias) ───────────────────────────────────────────────────
+# GPU_CHOICE 4 veya 5 → Optimus → prime-run alias ekle
+if [[ "$GPU_CHOICE" == "4" || "$GPU_CHOICE" == "5" ]]; then
+    cat >> "/home/${USER_NAME}/.bashrc" <<'BASHRC'
+
+# NVIDIA Optimus: dGPU ile uygulama çalıştırmak için
+# Kullanım: nrun <uygulama>  veya  prime-run <uygulama>
+alias nrun='prime-run'
+BASHRC
+    info "prime-run alias eklendi (~/.bashrc → 'nrun')."
+fi
 
 # ── i3 config ────────────────────────────────────────────────────────────────
 mkdir -p "/home/${USER_NAME}/.config/i3"
@@ -516,6 +539,7 @@ for_window [window_role="dialog"]      floating enable
 for_window [window_type="dialog"]      floating enable
 for_window [class="Pavucontrol"]       floating enable
 for_window [class="Nm-connection-editor"] floating enable
+for_window [class="Blueman-manager"]   floating enable
 for_window [title="File Transfer*"]    floating enable
 
 # ── Ses ──────────────────────────────────────────────────────────────────────
