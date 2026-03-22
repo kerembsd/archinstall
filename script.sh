@@ -170,7 +170,7 @@ case "$GPU_CHOICE" in
     4) GPU_PKGS="nvidia-open nvidia-utils nvidia-settings" ;;
     5) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia nvidia-utils nvidia-prime nvidia-settings" ;;
     6) GPU_PKGS="mesa intel-media-driver vulkan-intel nvidia-open nvidia-utils nvidia-prime nvidia-settings" ;;
-    7) GPU_PKGS="mesa xf86-video-vmware virtualbox-guest-utils" ;;
+    7) GPU_PKGS="mesa virtualbox-guest-utils" ;;
 esac
 
 # =============================================================================
