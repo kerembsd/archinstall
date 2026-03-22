@@ -210,6 +210,18 @@ pacstrap /mnt \
 
 info "Paketler kuruldu."
 genfstab -U /mnt >> /mnt/etc/fstab
+
+# genfstab bazen geçici mount'ları da yazabilir — /tmp double entry temizle
+grep -v "^[[:space:]]*$" /mnt/etc/fstab | grep -v "^#" | \
+    awk '{print $2}' | sort | uniq -d | while read -r dup; do
+    warn "fstab'da çift kayıt tespit edildi: $dup — ikinci satır siliniyor."
+    # İlk eşleşmeyi koru, sonrakileri sil
+    awk -v mp="$dup" '
+        $2==mp && seen { next }
+        $2==mp         { seen=1 }
+        { print }
+    ' /mnt/etc/fstab > /tmp/fstab.clean && mv /tmp/fstab.clean /mnt/etc/fstab
+done
 info "fstab oluşturuldu."
 
 # Optimize mirror listesini kurulu sisteme kopyala
@@ -305,8 +317,9 @@ editor no
 LOADER
 
 # nvidia_drm.modeset sadece NVIDIA varsa
+# NVreg_PreserveVideoMemoryAllocations → laptop uyku/uyanma sorunlarını önler
 NV_OPT=""
-[[ "$GPU_CHOICE" != "1" ]] && NV_OPT=" nvidia_drm.modeset=1"
+[[ "$GPU_CHOICE" != "1" ]] && NV_OPT=" nvidia_drm.modeset=1 NVreg_PreserveVideoMemoryAllocations=1"
 
 # ucode initrd satırı CPU'ya göre
 UCODE_IMG="/${CPU_UCODE}.img"
@@ -345,11 +358,13 @@ ZRAM
 info "ZRAM yapılandırıldı."
 
 # ── UFW Güvenlik Duvarı ──────────────────────────────────────────────────────
-ufw default deny incoming
-ufw default allow outgoing
-yes | ufw enable
+# Live ISO'da ip_tables kernel modülü yüklenemez; ufw/default.conf doğrudan düzenliyoruz.
+# Bu, 'ufw default deny incoming && ufw enable' ile eşdeğerdir.
+sed -i 's/^DEFAULT_INPUT_POLICY=.*/DEFAULT_INPUT_POLICY="DROP"/'     /etc/default/ufw
+sed -i 's/^DEFAULT_OUTPUT_POLICY=.*/DEFAULT_OUTPUT_POLICY="ACCEPT"/' /etc/default/ufw
+sed -i 's/^ENABLED=.*/ENABLED=yes/'                                  /etc/ufw/ufw.conf
 systemctl enable ufw
-info "UFW güvenlik duvarı etkinleştirildi."
+info "UFW yapılandırıldı (ilk boot'ta otomatik etkinleşecek)."
 
 # ── Snapper (Btrfs Snapshot) ─────────────────────────────────────────────────
 section "Snapper Yapılandırması"
@@ -646,8 +661,13 @@ echo "║  • Btrfs subvolume yapısı kuruldu                    ║"
 echo "║  • Snapper otomatik snapshot etkin                   ║"
 echo "║  • ZRAM swap yapılandırıldı                          ║"
 echo "║  • Pipewire ses sistemi kuruldu                      ║"
-echo "║  • i3wm + temel config hazır                         ║"
+echo "║  • i3wm + gaps config hazır                          ║"
 echo "║  • UFW güvenlik duvarı aktif                         ║"
+echo "╠══════════════════════════════════════════════════════╣"
+echo "║  İlk boot notları:                                   ║"
+echo "║  • Ses gelmezse: systemctl --user enable --now       ║"
+echo "║    pipewire pipewire-pulse wireplumber               ║"
+echo "║  • Optimus dGPU: nrun <uygulama>                    ║"
 echo "╠══════════════════════════════════════════════════════╣"
 echo "║  'umount -R /mnt && reboot' ile yeniden başlatın     ║"
 echo "╚══════════════════════════════════════════════════════╝"
