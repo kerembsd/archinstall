@@ -1,0 +1,13 @@
+TIMEOUT=3
+
+:Arch Linux
+    PROTOCOL=linux
+    KERNEL_PATH=boot():/vmlinuz-linux
+    CMDLINE=quiet rd.luks.name=32d7bde2-1e0a-4931-8cc7-f9f6d3b208f3=root root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs
+    MODULE_PATH=boot():/initramfs-linux.img
+
+:Arch Linux (Fallback)
+    PROTOCOL=linux
+    KERNEL_PATH=boot():/vmlinuz-linux
+    CMDLINE=quiet rd.luks.name=32d7bde2-1e0a-4931-8cc7-f9f6d3b208f3=root root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs
+    MODULE_PATH=boot():/initramfs-linux-fallback.img
