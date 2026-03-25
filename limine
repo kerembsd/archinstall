@@ -1,3 +1,21 @@
-sudo sed -i 's/^TIMELINE_CREATE="yes"/TIMELINE_CREATE="no"/' /etc/snapper/configs/root
-sudo sed -i 's/^NUMBER_LIMIT="50"/NUMBER_LIMIT="5"/' /etc/snapper/configs/root
-sudo sed -i 's/^NUMBER_LIMIT_IMPORTANT="10"/NUMBER_LIMIT_IMPORTANT="5"/' /etc/snapper/configs/root
+timeout: 3
+
+/+Arch Linux
+comment: Arch Linux
+comment: machine-id=6dd1daf5318d49979c0d353fa5145968
+
+    //Linux
+    protocol: linux
+    path: boot():/vmlinuz-linux
+    cmdline: quiet rd.luks.name=32d7bde2-1e0a-4931-8cc7-f9f6d3b208f3=root root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs
+    module_path: boot():/intel-ucode.img
+    module_path: boot():/initramfs-linux.img
+
+    //Linux (Fallback)
+    protocol: linux
+    path: boot():/vmlinuz-linux
+    cmdline: quiet rd.luks.name=32d7bde2-1e0a-4931-8cc7-f9f6d3b208f3=root root=/dev/mapper/root rw rootflags=subvol=@ rootfstype=btrfs
+    module_path: boot():/intel-ucode.img
+    module_path: boot():/initramfs-linux-fallback.img
+
+    //Snapshots
